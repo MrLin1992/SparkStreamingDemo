@@ -1,6 +1,6 @@
 package com.hh.spark.erji
 
-import kafka.serializer.StringDecoder
+//import org.apache.spark.streaming.StreamingContext._
 import org.apache.spark.streaming._
 import org.apache.spark.streaming.kafka._
 import org.apache.spark.SparkConf
@@ -19,45 +19,31 @@ import org.apache.spark.storage.StorageLevel
  *      org.apache.spark.examples.streaming.KafkaWordCount zoo01,zoo02,zoo03 \
  *      my-consumer-group topic1,topic2 1`
  */
-
 object Kafka {
   def main(args: Array[String]) {
     if (args.length < 4) {
-      System.err.println("Usage: KafkaWordCount"
-        + "<zkQuorum> <group> <topics> <numThreads>")
+      System.err.println("Usage: KafkaWordCount <zkQuorum> <group> <topics> <numThreads>")
       System.exit(1)
     }
-
-    val Array(zkQuorum, group, topics, numThreads) = args // receive kafka settings
-
-    /* create application driver StreamingContext */
-    val sparkConf = new SparkConf() // define spark app's name and master type
+    val Array(zkQuorum, group, topics, numThreads) = args
+    val sparkConf = new SparkConf()
       .setAppName("KafkaWordCount")
-    //      .setMaster("local[3]")
-    val ssc = new StreamingContext(sparkConf, Seconds(10)) // set the batch duration to 10 seconds
-                                                           // one job will be submit every 10 seconds
-
-    /* create InputDStream */
-    val receiversNum = 2 // set the receiver number this app will use
-    val topicMap = topics.split(",").map((_, numThreads.toInt)).toMap
-    val kafkaParams = Map[String, String](
-      "zookeeper.connect" -> zkQuorum,
-      "group.id" -> group,
-      "zookeeper.connection.timeout.ms" -> "10000",
-      "auto.commit.enable" -> "false")
-    val kafkaStreams = (1 to receiversNum.toInt).map {
-      i => KafkaUtils.createStream[String, String, StringDecoder, StringDecoder](ssc, kafkaParams, topicMap, StorageLevel.MEMORY_AND_DISK_SER_2)
-    } // create one InputDStream for one receiver
-
-    /* define operations on DStream */
-    val lines = ssc.union(kafkaStreams).map(_._2) // union all InputDStream to one
-    val words = lines.flatMap(_.split(" ")) // split the words in one line and flat them
-    val wordCounts = words.map(x => (x, 1L)).reduceByKey(_ + _) // count the words
-    wordCounts.print // print the first ten lines of the result
-
-    /* start the streaming job */
-    ssc.start() // start
-    ssc.awaitTermination() // wait, keep the app running forever
+      .setMaster("local[3]")
+    val ssc = new StreamingContext(sparkConf, Seconds(2))
+    val topicMap = topics.split(",")
+      .map((_, numThreads.toInt))
+      .toMap
+    val kafkaStreams = KafkaUtils
+      .createStream(ssc, zkQuorum, group, topicMap, 
+          StorageLevel.MEMORY_AND_DISK_SER_2)   
+    val lines = kafkaStreams.map(_._2)
+    val words = lines.flatMap(_.split(" "))
+    words.cache
+    val wordCounts = words.map(x => (x, 1L))
+      .reduceByKey((x:Long, y:Long) => x + y, 2)
+    wordCounts.persist(StorageLevel.DISK_ONLY)
+    wordCounts.print
+    ssc.start()
+    ssc.awaitTermination()
   }
-
 }
